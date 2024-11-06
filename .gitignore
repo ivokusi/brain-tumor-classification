@@ -1,0 +1,7 @@
+venv
+.env
+
+part-1/Testing
+part-1/Training
+part-1/brain-tumor-mri-dataset.zip
+part-1/models/*
