@@ -6,3 +6,13 @@ seaborn
 scikit-learn
 tensorflow
 keras
+
+streamlit
+python-dotenv
+flask
+plotly
+opencv-python
+google-generativeai
+Pillow
+groq
+openai
