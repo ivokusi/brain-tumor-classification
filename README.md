@@ -45,5 +45,5 @@ An intuitive user interface was built using the Streamlit library, allowing user
 ## Demo
 
 Check out the youtube video of the project: [Brain Tumor Detection Demo](https://youtu.be/wOMQ4hLDZ5U).
-Check out the live demo of the project: [Brain Tumor Detection Demo](https://customer-churn-prediction-101.streamlit.app/).
+Check out the live demo of the project: [Brain Tumor Detection Demo](https://brain-tumor-classification-101.streamlit.app/).
 - **Example Images:** You can find example images in the [examples folder](examples).
