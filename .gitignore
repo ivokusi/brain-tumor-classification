@@ -6,4 +6,5 @@ part-1/Training
 part-1/brain-tumor-mri-dataset.zip
 part-1/models/*
 
-saliency-maps/*
+flask/images/*
+flask/models/*
