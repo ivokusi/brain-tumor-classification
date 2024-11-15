@@ -1,323 +1,26 @@
-import streamlit as st
-import tensorflow as tf
-from tensorflow.keras.layers import Dense, Flatten, Dropout
-from tensorflow.keras.models import load_model, Sequential
-from tensorflow.keras.metrics import Precision, Recall
 from tensorflow.keras.preprocessing import image
-import google.generativeai as genai
-from tensorflow.keras.optimizers import Adamax
-import plotly.graph_objects as go
-from dotenv import load_dotenv
-from openai import OpenAI
-from PIL import Image
+import streamlit as st
 import numpy as np
-import base64
-import groq
-import cv2
-import os
+import requests
 
-load_dotenv()
+# Saliency Maps 
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+def draw_saliency_maps(nn_models, uploaded_file):
 
-GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
+    img = image.load_img(uploaded_file, target_size=(299, 299))
 
-openai_client = OpenAI()
-groq_client = groq.Groq(api_key=GROQ_API_KEY)
+    cols = st.columns(len(nn_models) + 1)
 
-output_dir = "saliency_maps"
-os.makedirs(output_dir, exist_ok=True)
+    with cols[0]:
+        st.image(img, caption="Original Image", use_container_width=True)
 
-base_path = os.path.dirname(os.path.abspath(__file__))
+    for idx, nn_model in enumerate(nn_models):
 
-# LLM Response
+        with cols[idx + 1]:
 
-def encode_image(img_path):
-  with open(img_path, "rb") as image_file:
-    return base64.b64encode(image_file.read()).decode('utf-8')
-  
-def request_groq_model(prompt, img_path):
+            st.image(np.array(nn_model["saliency_map"]), caption=f"{nn_model['name']}", use_container_width=True)
 
-    base64_image = encode_image(img_path)
-
-    chat_completion = groq_client.chat.completions.create(
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    { 
-                        "type": "text", 
-                        "text": prompt
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}",
-                        },
-                    },
-                ],
-            }
-        ],
-        model="llama-3.2-11b-vision-preview",
-    )
-
-    return chat_completion.choices[0].message.content
-
-def request_openai_model(prompt, img_path):
-
-    base64_image = encode_image(img_path)
-
-    chat_completion = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}",
-                        }
-                    },
-                ],
-            }
-        ],
-    )
-
-    return chat_completion.choices[0].message.content
-
-def request_gemini_model(prompt, img_path):
-
-    img = Image.open(img_path)
-
-    model = genai.GenerativeModel(model_name="gemini-1.5-flash")
-    response = model.generate_content([prompt, img])
-
-    return response.text
-
-def generate_explanation(model, img_path, model_prediction, confidence):
-
-    prompt = f"""
-    As an expert neurologist, your task is to analyze and interpret a saliency map generated from a brain MRI scan. This saliency map was created by a deep learning model trained to classify brain tumors into one of four categories: glioma, meningioma, no tumor, or pituitary tumor.
-    
-    The model predicted that the tumor type in this image is '{model_prediction}' with a confidence of {confidence}%.
-    
-    Please provide a comprehensive report that includes the following:
-
-    1. **Model's Prediction Analysis:** Identify the specific brain regions the model focused on, as shown by the highlighted areas in light cyan on the saliency map. Explain how these regions either support or contradict the predicted tumor type. Avoid discussing overfitting or confidence levels.
-
-    2. **Additional Insights:** Describe potential implications of the model's prediction based on typical signs of each tumor type. Discuss any specific features that may be atypical, noteworthy, or require further examination.
-
-    3. **Relevant Historical Cases:** Reference any similar cases in neurological oncology that could provide context for this prediction, noting any patterns, outcomes, or diagnostic pathways that may assist in understanding this patient's case.
-
-    4. **Next Steps for Patient and Doctors:** Outline recommended next steps for further diagnosis or treatment, taking into account the model's prediction and observed regions in the MRI. Include any additional tests, consultations, or specific treatment plans that would ensure comprehensive care.
-
-    **Keep your response concise but thorough, using a maximum of 6 sentences per section.**
-    """
-
-
-    if model == "Groq":
-        return request_groq_model(prompt, img_path)
-    elif model == "OpenAI":
-        return request_openai_model(prompt, img_path)
-    elif model == "Gemini":
-        return request_gemini_model(prompt, img_path)
-
-def generate_chat_response(model, img_path, model_prediction, confidence, explanation, question, history):
-
-    conversation_history = "".join([f"{message['role']}: {message['content']}\n" for message in history])
-
-    prompt = f"""
-    You are an experienced neurologist specializing in oncology with expertise in analyzing MRI scans to diagnose brain tumors.
-    A patient's MRI scan has been uploaded for your assessment.
-
-    The analysis is assisted by an advanced neural network model that has made a preliminary prediction. Here are the details:
-
-    - **Model Prediction:** The model identified the tumor as '{model_prediction}'.
-    - **Confidence Level:** The model is {confidence}% confident in this prediction.
-    - **Doctor Report:** {explanation}
-
-    **Conversation History (for context):**
-    The following messages are part of an ongoing conversation with the patient. Use this history to interpret the patient's current question in context, 
-    determining whether it relates to the MRI scan or medical case at hand. Ignore any unrelated or general questions (e.g., "what is a Turing machine") 
-    and answer only if the question is directly relevant to the medical case.
-
-    {conversation_history}
-
-    **Patient's Question:** {question}
-
-    Please provide a thoughtful and empathetic response based on your medical knowledge. Your tone should reflect the care and understanding of a compassionate doctor addressing a patient, avoiding any robotic or overly technical phrasing.
-
-    Take into account the model's prediction, the doctor's explanation, and the conversation history, but do not reference any of this information explicitly in your response. Ensure your words are supportive and patient-friendly.
-
-    **Your response should be limited to 2 sentences.**
-
-    **If using $, make sure to escape it by writing \\$.**
-    """
-
-
-    if model == "Groq":
-        return request_groq_model(prompt, img_path)
-    elif model == "OpenAI":
-        return request_openai_model(prompt, img_path)
-    elif model == "Gemini":
-        return request_gemini_model(prompt, img_path)
-
-def generate_saliency_map(model_name, model, img, img_array, class_index, img_size):
-    
-    with tf.GradientTape() as tape:
-        img_tensor = tf.convert_to_tensor(img_array)
-        tape.watch(img_tensor)
-        predictions = model(img_tensor)
-        target_class = predictions[:, class_index]
-
-    gradients = tape.gradient(target_class, img_tensor)
-    gradients = tf.math.abs(gradients)
-    gradients = tf.reduce_max(gradients, axis=-1)
-    gradients = gradients.numpy().squeeze()
-
-    # Resize gradients to match original image size
-    gradients = cv2.resize(gradients, img_size)
-
-    # Create a circular mask for the brain area
-    center = (gradients.shape[0] // 2, gradients.shape[1] // 2)
-    radius = min(center[0], center[1]) - 10
-    y, x = np.ogrid[:gradients.shape[0], :gradients.shape[1]]
-    mask = (x - center[0]) ** 2 + (y - center[1]) ** 2 <= radius ** 2
-
-    # Apply mask to gradients
-    gradients = gradients * mask
-
-    # Normalize only the brain area
-    brain_gradients = gradients[mask]
-    if brain_gradients.max() > brain_gradients.min():
-        brain_gradients = (brain_gradients - brain_gradients.min()) / (brain_gradients.max() - brain_gradients.min())
-    gradients[mask] = brain_gradients
-
-    # Apply a higher threshold
-    threshold = np.percentile(gradients[mask], 80)
-    gradients[gradients < threshold] = 0
-
-    # Apply more aggressive smoothing
-    gradients = cv2.GaussianBlur(gradients, (11, 11), 0)
-
-    # Create a heatmap overlay with enhanced contrast
-    heatmap = cv2.applyColorMap(np.uint8(255 * gradients), cv2.COLORMAP_JET)
-    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-
-    # Resize heatmap to match original image size
-    heatmap = cv2.resize(heatmap, img_size)
-
-    # Superimpose the heatmap on original image with increased opacity
-    original_img = image.img_to_array(img)
-    superimposed_img = heatmap * 0.7 + original_img * 0.3
-    superimposed_img = superimposed_img.astype(np.uint8)
-
-    img_path = os.path.join(output_dir, model_name, uploaded_file.name)
-    os.makedirs(os.path.dirname(img_path), exist_ok=True)
-
-    with open(img_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-
-    # Save the saliency map
-    cv2.imwrite(img_path, cv2.cvtColor(superimposed_img, cv2.COLOR_RGB2BGR))
-
-    return superimposed_img
-
-# Load NN Model
-
-def load_xception_model(model_path):
-
-    img_shape = (299, 299, 3)
-
-    base_model = tf.keras.applications.Xception(
-        include_top=False,
-        weights="imagenet",
-        input_shape=img_shape,
-        pooling="max"
-    )
-
-    model = Sequential([
-        base_model,
-        Flatten(),
-        Dropout(rate=0.3),
-        Dense(128, activation="relu"),
-        Dropout(rate=0.25),
-        Dense(4, activation="softmax")
-    ])
-
-    model.build((None,) + img_shape)
-
-    model.compile(
-        optimizer=Adamax(learning_rate=0.001), 
-        loss="categorical_crossentropy", 
-        metrics=["accuracy", Precision(), Recall()]
-    )
-
-    model.load_weights(model_path)
-
-    return model
-
-def load_resnet_model(model_path):
-
-    img_shape = (299, 299, 3)
-
-    base_model = tf.keras.applications.ResNet50(
-        include_top=False,
-        weights="imagenet",
-        input_shape=img_shape,
-        pooling="max"
-    )
-
-    model = Sequential([
-        base_model,
-        Flatten(),
-        Dropout(rate=0.3),
-        Dense(128, activation="relu"),
-        Dropout(rate=0.25),
-        Dense(4, activation="softmax")
-    ])
-
-    model.build((None,) + img_shape)
-
-    model.compile(
-        optimizer=Adamax(learning_rate=0.001), 
-        loss="categorical_crossentropy", 
-        metrics=["accuracy", Precision(), Recall()]
-    )
-
-    model.load_weights(model_path)
-
-    return model
-
-def run_model(model_name, model, uploaded_file, img_size):
-
-    img = image.load_img(uploaded_file, target_size=img_size)
-    img_array = image.img_to_array(img)
-    img_array = np.expand_dims(img_array, axis=0)
-    img_array /= 255.0
-
-    labels = ["Glioma", "Meningioma", "No tumor", "Pituitary"]
-
-    prediction = model.predict(img_array)
-
-    class_index = np.argmax(prediction[0])
-    result = labels[class_index]
-
-    saliency_map = generate_saliency_map(model_name, model, img, img_array, class_index, img_size)
-
-    return { 
-        "name": model_name, 
-        "prediction": result, 
-        "confidence": round(prediction[0][class_index] * 100, 5),
-        "saliency_map": saliency_map,
-        "probability_distribution": prediction[0]
-    }
+# Classification Results
 
 def get_prediction_color(prediction):
 
@@ -330,22 +33,7 @@ def get_prediction_color(prediction):
 
     return color_palette.get(prediction, "#282528")
 
-def draw_saliency_maps(models, uploaded_file):
-    
-    img = image.load_img(uploaded_file, target_size=(299, 299))
-
-    cols = st.columns(len(models) + 1)
-
-    with cols[0]:
-        st.image(img, caption="Original Image", use_container_width=True)
-
-    for idx, model in enumerate(models):
-
-        with cols[idx + 1]:
-            
-            st.image(model["saliency_map"], caption=f"{model['name']}", use_container_width=True)
-
-def draw_classification_results(models):
+def draw_classification_results(nn_models):
 
     labels = ["Glioma", "Meningioma", "No tumor", "Pituitary"]
 
@@ -400,25 +88,24 @@ def draw_classification_results(models):
         unsafe_allow_html=True,
     )
 
-    cols = st.columns(len(models))
+    cols = st.columns(len(nn_models))
 
     # Display each model's information in a card layout
-    for idx, model in enumerate(models):
+    for idx, nn_model in enumerate(nn_models):
         
         with cols[idx]:
 
-            sorted_indices = np.argsort(model['probability_distribution'])[::-1]
+            sorted_indices = np.argsort(nn_model['probability_distribution'])[::-1]
 
             label = labels[sorted_indices[0]]
-            probability = model['probability_distribution'][sorted_indices[0]]
+            probability = nn_model['probability_distribution'][sorted_indices[0]]
 
             probability_color = get_prediction_color(label)
-
 
             st.markdown(
                 f"""
                 <div class="model-card">
-                    <div class="model-name">{model['name']}</div>
+                    <div class="model-name">{nn_model['name']}</div>
                         <div>
                         <span class="prediction" style="background-color: {probability_color}; padding: 2px 8px; border-radius: 8px; margin-right: 5px;">
                             {label}
@@ -440,7 +127,7 @@ def draw_classification_results(models):
                 for index in sorted_indices[1:]:
 
                     label = labels[index]
-                    probability = model['probability_distribution'][index]
+                    probability = nn_model['probability_distribution'][index]
 
                     probability_color = get_prediction_color(label)
 
@@ -479,41 +166,56 @@ if uploaded_file is not None:
         default=["Xception", "ResNet50", "Custom CNN"]
     )
 
-    models = list()
+    nn_models = list()
 
     if "Xception" in selected_models and st.session_state.get("Xception") is None:
-        model = load_xception_model(os.path.join(base_path, "..", "part-1", "models", "xception_model.weights.h5"))
-        response = run_model("Xception", model, uploaded_file, (299, 299))
+        
+        response = requests.post("https://selected-gently-swift.ngrok-free.app/run_xception", files={
+            "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
+        }).json()
+
         st.session_state["Xception"] = response
-        models.append(response)
+        nn_models.append(response)
+
     elif "Xception" in selected_models and st.session_state.get("Xception") is not None:
-        models.append(st.session_state.get("Xception"))
+        
+        nn_models.append(st.session_state.get("Xception"))
     
     if "ResNet50" in selected_models and st.session_state.get("ResNet50") is None:
-        model = load_resnet_model(os.path.join(base_path, "..", "part-1", "models", "resnet_model.weights.h5"))
-        response = run_model("ResNet50", model, uploaded_file, (299, 299))
+       
+        response = requests.post("https://selected-gently-swift.ngrok-free.app/run_resnet", files={
+            "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
+        }).json()
+
         st.session_state["ResNet50"] = response
-        models.append(response)
+        nn_models.append(response)
+
     elif "ResNet50" in selected_models and st.session_state.get("ResNet50") is not None:
-        models.append(st.session_state.get("ResNet50"))
+        
+        nn_models.append(st.session_state.get("ResNet50"))
     
     if "Custom CNN" in selected_models and st.session_state.get("Custom CNN") is None:
-        model = load_model(os.path.join(base_path, "..", "part-1", "models", "cnn_model.keras"))
-        response = run_model("Custom CNN", model, uploaded_file, (224, 224))
+        
+        response = requests.post("https://selected-gently-swift.ngrok-free.app/run_cnn", files={
+            "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
+        }).json()
+
         st.session_state["Custom CNN"] = response
-        models.append(response)
+        nn_models.append(response)
+
     elif "Custom CNN" in selected_models and st.session_state.get("Custom CNN") is not None:
-        models.append(st.session_state.get("Custom CNN"))
+        
+        nn_models.append(st.session_state.get("Custom CNN"))
 
     if selected_models:
         
             st.write("## Saliency Maps")
 
-            draw_saliency_maps(models, uploaded_file)
+            draw_saliency_maps(nn_models, uploaded_file)
 
             st.write("## Classification Results")
 
-            draw_classification_results(models)
+            draw_classification_results(nn_models)
 
             llm_model = st.selectbox(
                 "LLM Model",
@@ -524,39 +226,54 @@ if uploaded_file is not None:
                 
                 st.write("## Report")
 
-                for model in models:
+                for nn_model in nn_models:
 
-                    saliency_map_path = os.path.join(base_path, "..", output_dir, model["name"], uploaded_file.name)
+                    if st.session_state.get(f"{nn_model['name']}_{llm_model}_report") is None:
+                        
+                        report = requests.post("https://selected-gently-swift.ngrok-free.app/generate-explanation", json={
+                            "nn_model": nn_model["name"],
+                            "llm_model": llm_model,
+                            "file_name": uploaded_file.name,
+                            "prediction": nn_model["prediction"],
+                            "confidence": nn_model["confidence"]
+                        }).json()
 
-                    if st.session_state.get(f"{model['name']}_{llm_model}_explanation") is None:
-                        explanation = generate_explanation(llm_model, saliency_map_path, model["prediction"], model["confidence"])
-                        st.session_state[f"{model['name']}_{llm_model}_explanation"] = explanation
+                        st.session_state[f"{nn_model['name']}_{llm_model}_report"] = report["response"]
                     
-                    st.write(f"### {model['name']}")
-                    st.write(st.session_state.get(f"{model['name']}_{llm_model}_explanation"))
+                    st.write(f"### {nn_model['name']}")
+                    st.write(st.session_state.get(f"{nn_model['name']}_{llm_model}_report"))
 
                     with st.expander("Chat with LLM"):
                         
                         chat_container = st.container(height=300)
 
-                        if st.session_state.get(f"{model['name']}_{llm_model}_history") is None:
-                            st.session_state[f"{model['name']}_{llm_model}_history"] = list()
+                        if st.session_state.get(f"{nn_model['name']}_{llm_model}_history") is None:
+                            st.session_state[f"{nn_model['name']}_{llm_model}_history"] = list()
 
-                        question = st.chat_input("Say something", key=f"{model['name']}_{llm_model}_chat") 
+                        question = st.chat_input("Say something", key=f"{nn_model['name']}_{llm_model}_question") 
 
-                        if st.button("Clear Chat History", key=f"{model['name']}_{llm_model}_clear_history"):
-                            st.session_state[f"{model['name']}_{llm_model}_history"] = []
+                        if st.button("Clear Chat History", key=f"{nn_model['name']}_{llm_model}_clear_history"):
+                            st.session_state[f"{nn_model['name']}_{llm_model}_history"] = []
 
                         with chat_container:
                             
                             if question:
                                 
-                                st.session_state[f"{model['name']}_{llm_model}_history"].append({"role": "user", "content": question})
+                                st.session_state[f"{nn_model['name']}_{llm_model}_history"].append({"role": "user", "content": question})
                                 
                                 with st.spinner("Waiting for response..."):
-                                    response = generate_chat_response(llm_model, saliency_map_path, model["prediction"], model["confidence"], st.session_state.get(f"{model['name']}_{llm_model}_explanation"), question, st.session_state[f"{model['name']}_{llm_model}_history"])
+                                    response = requests.post("https://selected-gently-swift.ngrok-free.app/generate-chat-response", json={
+                                        "llm_model": llm_model,
+                                        "nn_model": nn_model["name"],
+                                        "file_name": uploaded_file.name,
+                                        "prediction": nn_model["prediction"],
+                                        "confidence": nn_model["confidence"],
+                                        "report": st.session_state.get(f"{nn_model['name']}_{llm_model}_report"),
+                                        "question": question,
+                                        "history": st.session_state[f"{nn_model['name']}_{llm_model}_history"]
+                                    }).json()
                                 
-                                st.session_state[f"{model['name']}_{llm_model}_history"].append({"role": "assistant", "content": response})
+                                st.session_state[f"{nn_model['name']}_{llm_model}_history"].append({"role": "assistant", "content": response["response"]})
 
-                            for message in st.session_state[f"{model['name']}_{llm_model}_history"]:
+                            for message in st.session_state[f"{nn_model['name']}_{llm_model}_history"]:
                                 st.chat_message(message["role"]).write(message["content"]) 
