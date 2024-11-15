@@ -16,3 +16,4 @@ google-generativeai
 Pillow
 groq
 openai
+libGL
