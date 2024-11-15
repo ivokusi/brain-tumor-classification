@@ -11,9 +11,8 @@ streamlit
 python-dotenv
 flask
 plotly
-opencv-python
+opencv-python-headless
 google-generativeai
 Pillow
 groq
 openai
-libGL
