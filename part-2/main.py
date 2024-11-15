@@ -89,7 +89,7 @@ def request_openai_model(prompt, img_path):
         ],
     )
 
-    return chat_completion.choices[0].message
+    return chat_completion.choices[0].message.content
 
 def request_gemini_model(prompt, img_path):
 
@@ -103,24 +103,69 @@ def request_gemini_model(prompt, img_path):
 def generate_explanation(model, img_path, model_prediction, confidence):
 
     prompt = f"""
-    As an expert neurologist, your task is to analyze and interpret a saliency map generated from a brain MRI scan.
-    This saliency map was created by a deep learning model trained to classify brain tumors into one of four categories: glioma, meningioma, no tumor, or pituitary tumor.
+    As an expert neurologist, your task is to analyze and interpret a saliency map generated from a brain MRI scan. This saliency map was created by a deep learning model trained to classify brain tumors into one of four categories: glioma, meningioma, no tumor, or pituitary tumor.
     
     The model predicted that the tumor type in this image is '{model_prediction}' with a confidence of {confidence}%.
+    
+    Please provide a comprehensive report that includes the following:
 
-    In your response:
-     - Identify the specific brain regions the model focused on, as shown by the highlighted areas in light cyan on the saliency map.
-     - Use both the highlighted regions and the predicted tumor type to provide a well-rounded analysis, explaining why these regions may or may not support the model's prediction.
-     - If the model’s focus areas appear misplaced or inconsistent with typical indicators of the predicted tumor type, discuss why this might suggest an inaccurate prediction.
-     - Avoid mentioning overfitting or model confidence in your explanation. Focus solely on the MRI image and the areas highlighted by the saliency map.
-     - Limit your explanation to 4 sentences to keep it concise.
+    1. **Model's Prediction Analysis:** Identify the specific brain regions the model focused on, as shown by the highlighted areas in light cyan on the saliency map. Explain how these regions either support or contradict the predicted tumor type. Avoid discussing overfitting or confidence levels.
+
+    2. **Additional Insights:** Describe potential implications of the model's prediction based on typical signs of each tumor type. Discuss any specific features that may be atypical, noteworthy, or require further examination.
+
+    3. **Relevant Historical Cases:** Reference any similar cases in neurological oncology that could provide context for this prediction, noting any patterns, outcomes, or diagnostic pathways that may assist in understanding this patient's case.
+
+    4. **Next Steps for Patient and Doctors:** Outline recommended next steps for further diagnosis or treatment, taking into account the model's prediction and observed regions in the MRI. Include any additional tests, consultations, or specific treatment plans that would ensure comprehensive care.
+
+    **Keep your response concise but thorough, using a maximum of 6 sentences per section.**
     """
 
-    if model == "groq":
+
+    if model == "Groq":
         return request_groq_model(prompt, img_path)
-    elif model == "openai":
+    elif model == "OpenAI":
         return request_openai_model(prompt, img_path)
-    else:
+    elif model == "Gemini":
+        return request_gemini_model(prompt, img_path)
+
+def generate_chat_response(model, img_path, model_prediction, confidence, explanation, question, history):
+
+    conversation_history = "".join([f"{message['role']}: {message['content']}\n" for message in history])
+
+    prompt = f"""
+    You are an experienced neurologist specializing in oncology with expertise in analyzing MRI scans to diagnose brain tumors.
+    A patient's MRI scan has been uploaded for your assessment.
+
+    The analysis is assisted by an advanced neural network model that has made a preliminary prediction. Here are the details:
+
+    - **Model Prediction:** The model identified the tumor as '{model_prediction}'.
+    - **Confidence Level:** The model is {confidence}% confident in this prediction.
+    - **Doctor Report:** {explanation}
+
+    **Conversation History (for context):**
+    The following messages are part of an ongoing conversation with the patient. Use this history to interpret the patient's current question in context, 
+    determining whether it relates to the MRI scan or medical case at hand. Ignore any unrelated or general questions (e.g., "what is a Turing machine") 
+    and answer only if the question is directly relevant to the medical case.
+
+    {conversation_history}
+
+    **Patient's Question:** {question}
+
+    Please provide a thoughtful and empathetic response based on your medical knowledge. Your tone should reflect the care and understanding of a compassionate doctor addressing a patient, avoiding any robotic or overly technical phrasing.
+
+    Take into account the model's prediction, the doctor's explanation, and the conversation history, but do not reference any of this information explicitly in your response. Ensure your words are supportive and patient-friendly.
+
+    **Your response should be limited to 2 sentences.**
+
+    **If using $, make sure to escape it by writing \\$.**
+    """
+
+
+    if model == "Groq":
+        return request_groq_model(prompt, img_path)
+    elif model == "OpenAI":
+        return request_openai_model(prompt, img_path)
+    elif model == "Gemini":
         return request_gemini_model(prompt, img_path)
 
 def generate_saliency_map(model_name, model, img, img_array, class_index, img_size):
@@ -477,11 +522,11 @@ if uploaded_file is not None:
 
             if llm_model is not None:
                 
-                st.write("## Explanation")
+                st.write("## Report")
 
                 for model in models:
 
-                    saliency_map_path = os.path.join(output_dir, model["name"], uploaded_file.name)
+                    saliency_map_path = os.path.join(base_path, "..", output_dir, model["name"], uploaded_file.name)
 
                     if st.session_state.get(f"{model['name']}_{llm_model}_explanation") is None:
                         explanation = generate_explanation(llm_model, saliency_map_path, model["prediction"], model["confidence"])
@@ -497,13 +542,21 @@ if uploaded_file is not None:
                         if st.session_state.get(f"{model['name']}_{llm_model}_history") is None:
                             st.session_state[f"{model['name']}_{llm_model}_history"] = list()
 
-                        prompt = st.chat_input("Say something", key=f"{model['name']}_{llm_model}_chat") 
+                        question = st.chat_input("Say something", key=f"{model['name']}_{llm_model}_chat") 
+
+                        if st.button("Clear Chat History", key=f"{model['name']}_{llm_model}_clear_history"):
+                            st.session_state[f"{model['name']}_{llm_model}_history"] = []
 
                         with chat_container:
                             
-                            if prompt:
-                                st.session_state[f"{model['name']}_{llm_model}_history"].append({"role": "user", "content": prompt})
-                                st.session_state[f"{model['name']}_{llm_model}_history"].append({"role": "assistant", "content": f"Echo: {prompt}"})
+                            if question:
+                                
+                                st.session_state[f"{model['name']}_{llm_model}_history"].append({"role": "user", "content": question})
+                                
+                                with st.spinner("Waiting for response..."):
+                                    response = generate_chat_response(llm_model, saliency_map_path, model["prediction"], model["confidence"], st.session_state.get(f"{model['name']}_{llm_model}_explanation"), question, st.session_state[f"{model['name']}_{llm_model}_history"])
+                                
+                                st.session_state[f"{model['name']}_{llm_model}_history"].append({"role": "assistant", "content": response})
 
                             for message in st.session_state[f"{model['name']}_{llm_model}_history"]:
                                 st.chat_message(message["role"]).write(message["content"]) 
