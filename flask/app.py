@@ -120,9 +120,6 @@ def run_model(model_name, model, img_size, file):
 @flask_app.route("/run_xception", methods=["POST"])
 def run_xception():
 
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_path, "models", "xception_model.weights.h5")
-
     file = request.files["file"]
 
     img_size = (299, 299)
@@ -159,9 +156,6 @@ def run_xception():
 @flask_app.route("/run_resnet", methods=["POST"])
 def run_resnet():
 
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_path, "models", "resnet_model.weights.h5")
-
     file = request.files["file"]
 
     img_size = (299, 299)
@@ -197,9 +191,6 @@ def run_resnet():
 
 @flask_app.route("/run_cnn", methods=["POST"])
 def run_cnn():
-
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_path, "models", "cnn_model.keras")
 
     file = request.files["file"]
 
