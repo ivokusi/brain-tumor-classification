@@ -18,6 +18,8 @@ import io
 
 flask_app = Flask(__name__)
 
+# Download models from Azure
+
 workspace = Workspace.from_config()
 
 xception_path = Model.get_model_path(model_name="xception", version=1, _workspace=workspace)
