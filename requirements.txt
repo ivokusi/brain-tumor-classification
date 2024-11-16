@@ -18,3 +18,5 @@ groq
 openai
 
 flask
+azureml-sdk 
+azureml-dataset-runtime

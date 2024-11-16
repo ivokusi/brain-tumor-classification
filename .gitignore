@@ -8,3 +8,6 @@ part-1/models/*
 
 flask/images/*
 flask/models/*
+
+.azureml/*
+azureml-models/*

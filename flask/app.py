@@ -4,10 +4,12 @@ from tensorflow.keras.metrics import Precision, Recall
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.optimizers import Adamax
 from flask import Flask, request, jsonify
+from azureml.core import Workspace, Model
 import google.generativeai as genai
 from openai import OpenAI
 import tensorflow as tf
 from groq import Groq
+from PIL import Image
 import numpy as np
 import base64
 import cv2
@@ -15,6 +17,12 @@ import os
 import io
 
 flask_app = Flask(__name__)
+
+workspace = Workspace.from_config()
+
+xception_path = Model.get_model_path(model_name="xception", version=1, _workspace=workspace)
+resnet_path = Model.get_model_path(model_name="resnet", version=1, _workspace=workspace)
+cnn_path = Model.get_model_path(model_name="cnn", version=1, _workspace=workspace)
 
 # NN Models (helper functions)
 
@@ -144,7 +152,7 @@ def run_xception():
         metrics=["accuracy", Precision(), Recall()]
     )
 
-    model.load_weights(model_path)
+    model.load_weights(xception_path)
 
     return jsonify(run_model("Xception", model, img_size, file)), 200
 
@@ -183,7 +191,7 @@ def run_resnet():
         metrics=["accuracy", Precision(), Recall()]
     )
 
-    model.load_weights(model_path)
+    model.load_weights(resnet_path)
 
     return jsonify(run_model("ResNet50", model, img_size, file)), 200
 
@@ -197,15 +205,21 @@ def run_cnn():
 
     img_size = (224, 224)
 
-    model = load_model(model_path)
+    model = load_model(cnn_path)
 
     return jsonify(run_model("CustomCNN", model, img_size, file)), 200
 
 # LLM Models (helper functions)
 
-def encode_image(img_path):
-  with open(img_path, "rb") as image_file:
-    return base64.b64encode(image_file.read()).decode('utf-8')
+def encode_image(image):
+
+    image = Image.fromarray(np.array(image, dtype=np.uint8))
+  
+    with io.BytesIO() as buffer:
+        image.save(buffer, format="PNG")
+        base64_image = base64.b64encode(buffer.getvalue()).decode('utf-8')
+    
+    return base64_image
   
 def request_groq_model(prompt, base64_image):
 
@@ -288,17 +302,13 @@ def request_gemini_model(prompt, base64_image):
 @flask_app.route('/generate-explanation', methods=['POST'])
 def generate_explanation():
 
-    base_path = os.path.dirname(os.path.abspath(__file__))
-
     data = request.json
 
-    nn_model = data["nn_model"]
     llm_model = data["llm_model"]
     prediction = data["prediction"]
     confidence = data["confidence"]
 
-    image_path = os.path.join(base_path, "images", nn_model, data["file_name"])
-    base64_image = encode_image(image_path)
+    base64_image = encode_image(data["saliency_map"])
 
     prompt = f"""
     As an expert neurologist, your task is to analyze and interpret a saliency map generated from a brain MRI scan. This saliency map was created by a deep learning model trained to classify brain tumors into one of four categories: glioma, meningioma, no tumor, or pituitary tumor.
@@ -329,20 +339,18 @@ def generate_explanation():
 @flask_app.route('/generate-chat-response', methods=['POST'])
 def generate_chat_response():
 
-    base_path = os.path.dirname(os.path.abspath(__file__))
-
     data = request.json
 
-    nn_model = data["nn_model"]
     llm_model = data["llm_model"]
     prediction = data["prediction"]
     confidence = data["confidence"]
-    report = data["report"]
     question = data["question"]
-    history = data["history"]
-    
-    image_path = os.path.join(base_path, "images", nn_model, data["file_name"])
-    base64_image = encode_image(image_path)
+
+    context = data["context"]
+    report = context["report"]
+    history = context["history"]
+
+    base64_image = encode_image(data["saliency_map"])
 
     conversation_history = "".join([f"{message['role']}: {message['content']}\n" for message in history])
 

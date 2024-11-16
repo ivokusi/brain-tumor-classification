@@ -231,9 +231,8 @@ if uploaded_file is not None:
                     if st.session_state.get(f"{nn_model['name']}_{llm_model}_report") is None:
                         
                         report = requests.post("https://selected-gently-swift.ngrok-free.app/generate-explanation", json={
-                            "nn_model": nn_model["name"],
                             "llm_model": llm_model,
-                            "file_name": uploaded_file.name,
+                            "saliency_map": nn_model["saliency_map"],
                             "prediction": nn_model["prediction"],
                             "confidence": nn_model["confidence"]
                         }).json()
@@ -264,13 +263,14 @@ if uploaded_file is not None:
                                 with st.spinner("Waiting for response..."):
                                     response = requests.post("https://selected-gently-swift.ngrok-free.app/generate-chat-response", json={
                                         "llm_model": llm_model,
-                                        "nn_model": nn_model["name"],
-                                        "file_name": uploaded_file.name,
+                                        "saliency_map": nn_model["saliency_map"],
                                         "prediction": nn_model["prediction"],
                                         "confidence": nn_model["confidence"],
-                                        "report": st.session_state.get(f"{nn_model['name']}_{llm_model}_report"),
                                         "question": question,
-                                        "history": st.session_state[f"{nn_model['name']}_{llm_model}_history"]
+                                        "context": {
+                                            "report": st.session_state.get(f"{nn_model['name']}_{llm_model}_report"),   
+                                            "history": st.session_state[f"{nn_model['name']}_{llm_model}_history"]
+                                        }
                                     }).json()
                                 
                                 st.session_state[f"{nn_model['name']}_{llm_model}_history"].append({"role": "assistant", "content": response["response"]})
