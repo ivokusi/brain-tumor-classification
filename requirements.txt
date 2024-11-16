@@ -123,7 +123,7 @@ namex==0.0.8
 narwhals==1.13.2
 ndg-httpsclient==0.5.1
 nest-asyncio==1.6.0
-numpy==1.26.4
+numpy==1.19.3
 oauthlib==3.2.2
 openai==1.54.4
 opencensus==0.11.4
